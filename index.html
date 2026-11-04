@@ -1,0 +1,196 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useEffect } from 'react';
+import { Header } from './components/Header';
+import { CounselingForm } from './components/CounselingForm';
+import { CounselingList } from './components/CounselingList';
+import { SqlGuideModal } from './components/SqlGuideModal';
+import { SupabaseConnectModal } from './components/SupabaseConnectModal';
+import { SqlQuickBanner } from './components/SqlQuickBanner';
+import {
+  getStoredConfig,
+  saveStoredConfig,
+  fetchCounselingPosts,
+  createCounselingPost,
+  replyToPost,
+} from './lib/supabase';
+import { CounselingPost, SupabaseConfig } from './types';
+import { Heart, Sparkles, Database, CheckCircle2 } from 'lucide-react';
+
+export default function App() {
+  const [currentTab, setCurrentTab] = useState<'write' | 'inbox' | 'teacher'>('write');
+  const [posts, setPosts] = useState<CounselingPost[]>([]);
+  const [config, setConfig] = useState<SupabaseConfig>(getStoredConfig());
+  const [isLiveConnected, setIsLiveConnected] = useState<boolean>(false);
+  const [isSqlModalOpen, setIsSqlModalOpen] = useState<boolean>(false);
+  const [isConnectModalOpen, setIsConnectModalOpen] = useState<boolean>(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
+
+  // 데이터 로드
+  const loadPosts = async () => {
+    const res = await fetchCounselingPosts(config);
+    setPosts(res.posts);
+    setIsLiveConnected(res.isLive);
+  };
+
+  useEffect(() => {
+    loadPosts();
+  }, [config]);
+
+  // 새 글 등록 핸들러
+  const handleCreatePost = async (postData: {
+    student_name: string;
+    content: string;
+    category: CounselingPost['category'];
+    mood: string;
+    is_private: boolean;
+  }) => {
+    const res = await createCounselingPost(postData, config);
+    if (res.success) {
+      setPosts((prev) => [res.post, ...prev]);
+      showToast('💌 고민이 안전하게 등록되었습니다!');
+      return true;
+    }
+    return false;
+  };
+
+  // 선생님 답변 핸들러
+  const handleReply = async (id: number | string, replyText: string) => {
+    const success = await replyToPost(id, replyText, config);
+    if (success) {
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                teacher_reply: replyText,
+                teacher_replied_at: new Date().toISOString(),
+                status: '답변완료',
+              }
+            : p
+        )
+      );
+      showToast('🧑‍🏫 학생에게 따뜻한 답장을 전송했습니다!');
+      return true;
+    }
+    return false;
+  };
+
+  // Supabase 설정 저장
+  const handleSaveConfig = (newConfig: SupabaseConfig) => {
+    saveStoredConfig(newConfig);
+    setConfig(newConfig);
+    showToast('⚙️ Supabase 설정이 저장되었습니다.');
+  };
+
+  const totalCount = posts.length;
+  const waitingCount = posts.filter((p) => !p.teacher_reply).length;
+
+  return (
+    <div className="min-h-screen bg-[#faf8f5] text-slate-800 flex flex-col font-sans selection:bg-amber-200">
+      
+      {/* 글로벌 상단 헤더 */}
+      <Header
+        currentTab={currentTab}
+        onSelectTab={setCurrentTab}
+        onOpenSqlModal={() => setIsSqlModalOpen(true)}
+        onOpenConnectModal={() => setIsConnectModalOpen(true)}
+        isLiveConnected={isLiveConnected}
+        totalCount={totalCount}
+        waitingCount={waitingCount}
+      />
+
+      {/* 메인 콘텐츠 영역 */}
+      <main className="flex-1 max-w-6xl w-full mx-auto px-4 sm:px-6 py-6">
+        
+        {/* 상단 빠른 SQL 복사 배너 */}
+        <SqlQuickBanner onOpenFullModal={() => setIsSqlModalOpen(true)} />
+
+        {/* 탭별 뷰 */}
+        {currentTab === 'write' && (
+          <CounselingForm
+            onSubmit={handleCreatePost}
+            onNavigateToInbox={() => setCurrentTab('inbox')}
+          />
+        )}
+
+        {currentTab === 'inbox' && (
+          <CounselingList
+            posts={posts}
+            isTeacherMode={false}
+            onReply={handleReply}
+            onNavigateToWrite={() => setCurrentTab('write')}
+          />
+        )}
+
+        {currentTab === 'teacher' && (
+          <CounselingList
+            posts={posts}
+            isTeacherMode={true}
+            onReply={handleReply}
+            onNavigateToWrite={() => setCurrentTab('write')}
+          />
+        )}
+      </main>
+
+      {/* 푸터 */}
+      <footer className="border-t border-slate-200/80 bg-white/60 py-6 text-center text-xs text-slate-400">
+        <div className="max-w-4xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-1.5 text-slate-500">
+            <span>우리반 아이들을 위한 마음 쉼터</span>
+            <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
+            <span className="font-semibold text-slate-700">익명 고민상담소</span>
+          </div>
+
+          <div className="flex items-center gap-4 text-[11px]">
+            <button
+              onClick={() => setIsSqlModalOpen(true)}
+              className="text-emerald-700 hover:underline flex items-center gap-1"
+            >
+              <Database className="w-3 h-3" /> SQL 쿼리 가이드
+            </button>
+            <span>•</span>
+            <button
+              onClick={() => setIsConnectModalOpen(true)}
+              className="text-slate-600 hover:underline"
+            >
+              Supabase 연동 상태 확인
+            </button>
+          </div>
+        </div>
+      </footer>
+
+      {/* SQL 쿼리 모달 */}
+      <SqlGuideModal
+        isOpen={isSqlModalOpen}
+        onClose={() => setIsSqlModalOpen(false)}
+      />
+
+      {/* Supabase 설정 모달 */}
+      <SupabaseConnectModal
+        isOpen={isConnectModalOpen}
+        onClose={() => setIsConnectModalOpen(false)}
+        config={config}
+        onSaveConfig={handleSaveConfig}
+        isLiveConnected={isLiveConnected}
+      />
+
+      {/* 플로팅 토스트 메시지 */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 flex items-center gap-2 px-4 py-3 rounded-2xl bg-slate-900 text-white text-xs font-semibold shadow-2xl animate-fade-in border border-slate-700">
+          <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+    </div>
+  );
+}
